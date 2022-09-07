@@ -1,0 +1,67 @@
+apiVersion: template.openshift.io/v1
+kind: Template
+metadata:
+  name: cronjob-template
+  annotations:
+    description: "Description"
+    tags: "cronjob,pods"
+objects:
+- apiVersion: batch/v1beta1
+  kind: CronJob
+  metadata:
+    name: list-pods-with-error
+  spec:
+    concurrencyPolicy: Replace
+    failedJobsHistoryLimit: 1
+    jobTemplate:
+      spec:
+        template:
+          metadata:
+            labels:
+              parent: cronjoblistpods
+          spec:
+            containers:
+            - command:
+              - /bin/sh
+              - -c
+              - /tmp/alert-jobs.sh
+              image: registry.redhat.io/openshift4/ose-cli:v4.10
+              imagePullPolicy: IfNotPresent
+              name: oc-cli
+              volumeMounts:
+              - mountPath: /tmp/
+                name: script
+            dnsPolicy: ClusterFirst
+            restartPolicy: OnFailure
+            schedulerName: default-scheduler
+            terminationGracePeriodSeconds: 30
+            volumes:
+            - configMap:
+                defaultMode: 511
+                name: alert-jobs
+              name: script
+    schedule: '*/10 * * * *'
+    startingDeadlineSeconds: 200
+    successfulJobsHistoryLimit: 3
+    suspend: true
+- kind: ConfigMap
+  apiVersion: v1
+  metadata:
+    name: alert-jobs
+  data:
+    alert-jobs.sh: >
+      #!/bin/bash
+
+
+      list_pods_with_error=$(oc get pods
+      --field-selector=status.phase!=Succeeded,status.phase!=Running 2>&1)
+
+      echo "Message $list_pods_with_error"
+
+      printf -v data '{"@type": "MessageCard","text":"%s"}'
+      "$list_pods_with_error"
+
+      curl --location --request POST
+      '<REPLACE_INCOMING_MSTEAMS_WEBHOOK>' \
+      --header 'Content-Type: application/json' \
+      -d "$data"
